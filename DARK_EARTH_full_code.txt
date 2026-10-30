@@ -1,0 +1,1502 @@
+DARK EARTH – full source code (Unity C#)
+Each section = one file under Assets/Scripts/
+
+################################################################
+# FILE: Assets/Scripts/DarkEarthBootstrap.cs
+################################################################
+using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.Events;
+using UnityEngine.EventSystems;
+using TMPro;
+using UnityEngine.XR.ARFoundation;
+
+// One-component setup: add this to the "GameSystems" object and press Play / build.
+// It adds the other game components, builds a placeholder monster and the whole HUD
+// (score, ammo, wave, health, FIRE / RELOAD / HUNT buttons, crosshair, game-over screen).
+// Anything you assign yourself in the Inspector (monster prefab, sun, font) is used instead.
+[DefaultExecutionOrder(-100)]
+public class DarkEarthBootstrap : MonoBehaviour
+{
+    [Header("Optional - auto-detected when empty")]
+    [SerializeField] private Camera arCamera;
+    [SerializeField] private GameObject monsterPrefab;   // your own monster; empty = built-in placeholder
+    [SerializeField] private Light sceneSun;
+
+    [Header("Options")]
+    [SerializeField] private bool buildHud = true;
+    [SerializeField] private bool autoStartHunt = false; // false = player presses HUNT
+    [SerializeField] private bool hebrewTexts = false;   // needs a Hebrew font, see README
+    [SerializeField] private TMP_FontAsset hudFont;
+
+    private GameManager gm;
+    private MonsterSpawner spawner;
+    private WeaponController weapon;
+    private FireButton fireButton;
+    private EnvironmentController envController;
+    private GameObject huntButtonObject;
+
+    private void Awake()
+    {
+        Loc.Hebrew = hebrewTexts;
+
+        arCamera = ResolveCamera();
+        if (arCamera == null)
+        {
+            Debug.LogError("DarkEarthBootstrap: no camera found. Add an XR Origin with an AR Camera.");
+            enabled = false;
+            return;
+        }
+
+#if UNITY_EDITOR
+        if (arCamera.GetComponent<EditorAimHelper>() == null)
+            arCamera.gameObject.AddComponent<EditorAimHelper>();
+#endif
+
+        gm = GetOrAdd<GameManager>();
+        envController = GetOrAdd<EnvironmentController>();
+        envController.Configure(sceneSun, null);
+
+        if (monsterPrefab == null) monsterPrefab = BuildDefaultMonster();
+
+        spawner = GetOrAdd<MonsterSpawner>();
+        spawner.Configure(monsterPrefab, arCamera, FindFirstObjectByType<ARRaycastManager>(), envController);
+
+        weapon = GetOrAdd<WeaponController>();
+        weapon.Configure(arCamera);
+
+        fireButton = GetOrAdd<FireButton>();
+        fireButton.Configure(weapon);
+
+        if (buildHud) BuildHud();
+    }
+
+    private void Start()
+    {
+        if (autoStartHunt)
+        {
+            if (huntButtonObject != null) huntButtonObject.SetActive(false);
+            spawner.StartHunt();
+        }
+    }
+
+    private T GetOrAdd<T>() where T : Component
+    {
+        T c = GetComponent<T>();
+        if (c == null) c = gameObject.AddComponent<T>();
+        return c;
+    }
+
+    private Camera ResolveCamera()
+    {
+        if (arCamera != null) return arCamera;
+        if (Camera.main != null) return Camera.main;
+
+        ARCameraManager manager = FindFirstObjectByType<ARCameraManager>();
+        if (manager != null) return manager.GetComponent<Camera>();
+
+        return FindFirstObjectByType<Camera>();
+    }
+
+    // ------------------------------------------------------------------
+    // Placeholder monster (capsule body, glowing eyes, floating health bar)
+    // The root pivot is at the monster's feet. Eyes are on the +Z (front) side.
+    // ------------------------------------------------------------------
+    private GameObject BuildDefaultMonster()
+    {
+        GameObject root = new GameObject("DefaultMonsterTemplate");
+        root.transform.SetParent(transform, false);
+        root.SetActive(false); // template only; spawned copies are activated by the spawner
+
+        CapsuleCollider col = root.AddComponent<CapsuleCollider>();
+        col.center = new Vector3(0f, 0.6f, 0f);
+        col.height = 1.2f;
+        col.radius = 0.38f;
+
+        GameObject body = MakePrimitive(PrimitiveType.Capsule, root.transform, "Body",
+            new Vector3(0f, 0.6f, 0f), new Vector3(0.75f, 0.6f, 0.75f), new Color(0.55f, 0.08f, 0.10f));
+
+        MakePrimitive(PrimitiveType.Sphere, root.transform, "EyeL",
+            new Vector3(-0.14f, 0.85f, 0.31f), Vector3.one * 0.14f, new Color(1f, 0.9f, 0.2f));
+        MakePrimitive(PrimitiveType.Sphere, root.transform, "EyeR",
+            new Vector3(0.14f, 0.85f, 0.31f), Vector3.one * 0.14f, new Color(1f, 0.9f, 0.2f));
+
+        // Floating health bar (fill pivot is on the left edge)
+        GameObject barRoot = new GameObject("HealthBar");
+        barRoot.transform.SetParent(root.transform, false);
+        barRoot.transform.localPosition = new Vector3(0f, 1.45f, 0f);
+
+        MakePrimitive(PrimitiveType.Cube, barRoot.transform, "BarBack",
+            Vector3.zero, new Vector3(0.84f, 0.1f, 0.02f), new Color(0.1f, 0.1f, 0.1f));
+
+        GameObject fillPivot = new GameObject("BarFillPivot");
+        fillPivot.transform.SetParent(barRoot.transform, false);
+        fillPivot.transform.localPosition = new Vector3(-0.4f, 0f, -0.015f);
+
+        MakePrimitive(PrimitiveType.Cube, fillPivot.transform, "BarFill",
+            new Vector3(0.4f, 0f, 0f), new Vector3(0.8f, 0.07f, 0.02f), new Color(0.2f, 0.9f, 0.25f));
+
+        MonsterHealth health = root.AddComponent<MonsterHealth>();
+        health.ConfigureHealthBar(barRoot.transform, fillPivot.transform);
+        root.AddComponent<MonsterAI>();
+
+        return root;
+    }
+
+    private static GameObject MakePrimitive(PrimitiveType type, Transform parent, string name,
+                                            Vector3 localPos, Vector3 localScale, Color color)
+    {
+        GameObject go = GameObject.CreatePrimitive(type);
+        go.name = name;
+        Collider c = go.GetComponent<Collider>();
+        if (c != null) DestroyImmediate(c); // only the root capsule collider is used for hits
+        go.transform.SetParent(parent, false);
+        go.transform.localPosition = localPos;
+        go.transform.localScale = localScale;
+        go.GetComponent<Renderer>().material.color = color;
+        return go;
+    }
+
+    // ------------------------------------------------------------------
+    // HUD
+    // ------------------------------------------------------------------
+    private void BuildHud()
+    {
+        EnsureEventSystem();
+
+        GameObject canvasGo = new GameObject("DarkEarthHUD", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+        Canvas canvas = canvasGo.GetComponent<Canvas>();
+        canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+        canvas.sortingOrder = 100;
+
+        CanvasScaler scaler = canvasGo.GetComponent<CanvasScaler>();
+        scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+        scaler.referenceResolution = new Vector2(1080f, 1920f);
+        scaler.matchWidthOrHeight = 0.5f;
+
+        Transform root = canvasGo.transform;
+        Vector2 topLeft = new Vector2(0f, 1f), topRight = new Vector2(1f, 1f), topMid = new Vector2(0.5f, 1f);
+        Vector2 botLeft = new Vector2(0f, 0f), botRight = new Vector2(1f, 0f), botMid = new Vector2(0.5f, 0f);
+        Vector2 mid = new Vector2(0.5f, 0.5f);
+
+        // Damage flash (full screen)
+        Image flash = CreateImage(root, "DamageFlash", new Color(1f, 0f, 0f, 0f), mid, mid, Vector2.zero, Vector2.zero);
+        flash.rectTransform.anchorMin = Vector2.zero;
+        flash.rectTransform.anchorMax = Vector2.one;
+        flash.rectTransform.offsetMin = Vector2.zero;
+        flash.rectTransform.offsetMax = Vector2.zero;
+
+        // Crosshair
+        CreateImage(root, "CrosshairH", new Color(1f, 1f, 1f, 0.85f), mid, mid, Vector2.zero, new Vector2(56f, 4f));
+        CreateImage(root, "CrosshairV", new Color(1f, 1f, 1f, 0.85f), mid, mid, Vector2.zero, new Vector2(4f, 56f));
+
+        // Top HUD
+        TMP_Text score = CreateText(root, "Score", "", 44, TextAlignmentOptions.TopLeft, topLeft, topLeft, new Vector2(30f, -90f), new Vector2(520f, 60f));
+        TMP_Text ammo = CreateText(root, "Ammo", "", 44, TextAlignmentOptions.TopLeft, topLeft, topLeft, new Vector2(30f, -155f), new Vector2(520f, 60f));
+        TMP_Text wave = CreateText(root, "Wave", "", 44, TextAlignmentOptions.TopRight, topRight, topRight, new Vector2(-30f, -90f), new Vector2(520f, 60f));
+        TMP_Text status = CreateText(root, "Status", "", 42, TextAlignmentOptions.Top, topMid, topMid, new Vector2(0f, -240f), new Vector2(1000f, 130f));
+        TMP_Text env = CreateText(root, "Environment", "", 30, TextAlignmentOptions.Top, topMid, topMid, new Vector2(0f, -375f), new Vector2(1000f, 50f));
+        envController.Configure(null, env);
+
+        // Player health bar (bottom centre)
+        Image healthBack = CreateImage(root, "HealthBack", new Color(0f, 0f, 0f, 0.6f), botMid, botMid, new Vector2(0f, 330f), new Vector2(360f, 36f));
+        Image healthFillImg = CreateImage(healthBack.transform, "HealthFill", new Color(0.85f, 0.15f, 0.15f, 0.95f), mid, mid, Vector2.zero, Vector2.zero);
+        RectTransform fillRect = healthFillImg.rectTransform;
+        fillRect.anchorMin = Vector2.zero;
+        fillRect.anchorMax = Vector2.one;
+        fillRect.offsetMin = Vector2.zero;
+        fillRect.offsetMax = Vector2.zero;
+        TMP_Text health = CreateText(healthBack.transform, "HealthText", "", 28, TextAlignmentOptions.Center, mid, mid, Vector2.zero, new Vector2(360f, 36f));
+
+        // Buttons
+        CreateButton(root, "FireButton", Loc.Fire, new Color(0.8f, 0.1f, 0.1f, 0.85f), botRight, botRight,
+                     new Vector2(-50f, 120f), new Vector2(300f, 300f), 64, fireButton.OnFirePressed);
+        CreateButton(root, "ReloadButton", Loc.Reload, new Color(0.15f, 0.35f, 0.75f, 0.85f), botLeft, botLeft,
+                     new Vector2(50f, 120f), new Vector2(240f, 160f), 40, gm.Reload);
+
+        Button hunt = CreateButton(root, "HuntButton", Loc.Hunt, new Color(0.1f, 0.6f, 0.2f, 0.9f), botMid, botMid,
+                     new Vector2(0f, 120f), new Vector2(300f, 160f), 48, null);
+        huntButtonObject = hunt.gameObject;
+        hunt.onClick.AddListener(() => { spawner.StartHunt(); huntButtonObject.SetActive(false); });
+
+        // Game over panel
+        Image panelImg = CreateImage(root, "GameOverPanel", new Color(0f, 0f, 0f, 0.8f), mid, mid, Vector2.zero, Vector2.zero);
+        panelImg.raycastTarget = true; // block taps behind the panel
+        panelImg.rectTransform.anchorMin = Vector2.zero;
+        panelImg.rectTransform.anchorMax = Vector2.one;
+        panelImg.rectTransform.offsetMin = Vector2.zero;
+        panelImg.rectTransform.offsetMax = Vector2.zero;
+        TMP_Text overText = CreateText(panelImg.transform, "GameOverText", "", 70, TextAlignmentOptions.Center, mid, mid, new Vector2(0f, 150f), new Vector2(900f, 500f));
+        Button restart = CreateButton(panelImg.transform, "RestartButton", Loc.Restart, new Color(0.1f, 0.6f, 0.2f, 0.95f), mid, mid,
+                     new Vector2(0f, -250f), new Vector2(480f, 160f), 52, null);
+        restart.onClick.AddListener(() =>
+        {
+            gm.RestartGame();
+            if (huntButtonObject != null) huntButtonObject.SetActive(false); // hunt restarts automatically
+        });
+        panelImg.gameObject.SetActive(false);
+
+        gm.BindHud(status, score, ammo, health, wave, fillRect, flash, panelImg.gameObject, overText);
+    }
+
+    private void EnsureEventSystem()
+    {
+        if (FindFirstObjectByType<EventSystem>() != null) return;
+
+        GameObject es = new GameObject("EventSystem", typeof(EventSystem));
+#if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
+        es.AddComponent<UnityEngine.InputSystem.UI.InputSystemUIInputModule>();
+#else
+        es.AddComponent<StandaloneInputModule>();
+#endif
+    }
+
+    private static void SetRect(RectTransform rt, Vector2 anchor, Vector2 pivot, Vector2 pos, Vector2 size)
+    {
+        rt.anchorMin = anchor;
+        rt.anchorMax = anchor;
+        rt.pivot = pivot;
+        rt.anchoredPosition = pos;
+        rt.sizeDelta = size;
+    }
+
+    private Image CreateImage(Transform parent, string name, Color color, Vector2 anchor, Vector2 pivot, Vector2 pos, Vector2 size)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(parent, false);
+        Image img = go.GetComponent<Image>();
+        img.color = color;
+        img.raycastTarget = false;
+        SetRect(img.rectTransform, anchor, pivot, pos, size);
+        return img;
+    }
+
+    private TMP_Text CreateText(Transform parent, string name, string text, int fontSize, TextAlignmentOptions align,
+                                Vector2 anchor, Vector2 pivot, Vector2 pos, Vector2 size)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform));
+        go.transform.SetParent(parent, false);
+        TextMeshProUGUI t = go.AddComponent<TextMeshProUGUI>();
+        t.text = text;
+        t.fontSize = fontSize;
+        t.alignment = align;
+        t.color = Color.white;
+        t.raycastTarget = false;
+        t.outlineWidth = 0.2f;
+        t.outlineColor = new Color32(0, 0, 0, 255);
+        if (hudFont != null) t.font = hudFont;
+        SetRect(t.rectTransform, anchor, pivot, pos, size);
+        return t;
+    }
+
+    private Button CreateButton(Transform parent, string name, string label, Color color, Vector2 anchor, Vector2 pivot,
+                                Vector2 pos, Vector2 size, int fontSize, UnityAction onClick)
+    {
+        GameObject go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+        go.transform.SetParent(parent, false);
+        SetRect((RectTransform)go.transform, anchor, pivot, pos, size);
+
+        Image img = go.GetComponent<Image>();
+        img.color = color;
+
+        Button button = go.GetComponent<Button>();
+        button.targetGraphic = img;
+        if (onClick != null) button.onClick.AddListener(onClick);
+
+        CreateText(go.transform, "Label", label, fontSize, TextAlignmentOptions.Center,
+                   new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, size);
+        return button;
+    }
+}
+
+################################################################
+# FILE: Assets/Scripts/GameManager.cs
+################################################################
+using System;
+using System.Collections;
+using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
+
+public class GameManager : MonoBehaviour
+{
+    public static GameManager Instance { get; private set; }
+
+    public enum GameState { Ready, Playing, GameOver }
+
+    [Header("HUD (optional - DarkEarthBootstrap can build it for you)")]
+    [SerializeField] private TMP_Text statusText;
+    [SerializeField] private TMP_Text scoreText;
+    [SerializeField] private TMP_Text ammoText;
+    [SerializeField] private TMP_Text healthText;
+    [SerializeField] private TMP_Text waveText;
+    [SerializeField] private RectTransform playerHealthFill;
+    [SerializeField] private Image damageFlash;
+    [SerializeField] private GameObject gameOverPanel;
+    [SerializeField] private TMP_Text gameOverText;
+
+    [Header("Game values")]
+    [SerializeField] private int startingAmmo = 12;
+    [SerializeField] private int pointsPerMonster = 100;
+    [SerializeField] private int ammoPerKill = 2;
+    [SerializeField] private int playerMaxHealth = 100;
+    [SerializeField] private float reloadTime = 1f;
+
+    [Header("Language")]
+    [SerializeField] private bool hebrewTexts = false;
+
+    public event Action OnRestart;
+
+    public GameState State { get; private set; } = GameState.Ready;
+    public bool IsPlaying => State == GameState.Playing;
+    public bool IsReloading { get; private set; }
+    public int Ammo { get; private set; }
+    public int Score { get; private set; }
+    public int PlayerHealth { get; private set; }
+    public int Wave { get; private set; }
+
+    private float flashAlpha;
+
+    private void Awake()
+    {
+        if (Instance != null && Instance != this)
+        {
+            Destroy(this); // destroy only the duplicate component, never the whole object
+            return;
+        }
+        Instance = this;
+        if (hebrewTexts) Loc.Hebrew = true;
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this) Instance = null;
+    }
+
+    private void Start()
+    {
+        ResetValues();
+        State = GameState.Ready;
+        if (gameOverPanel != null) gameOverPanel.SetActive(false);
+        UpdateHUD();
+        SetStatus(Loc.MissionReady);
+    }
+
+    private void Update()
+    {
+        if (damageFlash != null && flashAlpha > 0f)
+        {
+            flashAlpha = Mathf.MoveTowards(flashAlpha, 0f, Time.deltaTime * 1.5f);
+            Color c = damageFlash.color;
+            c.a = flashAlpha;
+            damageFlash.color = c;
+        }
+    }
+
+    // Lets DarkEarthBootstrap hand over the runtime-built HUD.
+    public void BindHud(TMP_Text status, TMP_Text score, TMP_Text ammo, TMP_Text health, TMP_Text wave,
+                        RectTransform healthFill, Image flash, GameObject overPanel, TMP_Text overText)
+    {
+        statusText = status; scoreText = score; ammoText = ammo; healthText = health; waveText = wave;
+        playerHealthFill = healthFill; damageFlash = flash; gameOverPanel = overPanel; gameOverText = overText;
+        UpdateHUD();
+    }
+
+    // ---------- Flow ----------
+
+    public void BeginHunt()
+    {
+        if (State == GameState.Playing) return;
+        State = GameState.Playing;
+        SetStatus(Loc.HuntBegins);
+    }
+
+    public void RestartGame()
+    {
+        foreach (MonsterHealth m in FindObjectsByType<MonsterHealth>(FindObjectsSortMode.None))
+            m.Despawn();
+
+        ResetValues();
+        State = GameState.Ready;
+        if (gameOverPanel != null) gameOverPanel.SetActive(false);
+        UpdateHUD();
+        SetStatus(Loc.MissionReady);
+
+        if (OnRestart != null) OnRestart.Invoke();
+    }
+
+    private void ResetValues()
+    {
+        StopAllCoroutines();
+        IsReloading = false;
+        Ammo = startingAmmo;
+        Score = 0;
+        Wave = 0;
+        PlayerHealth = playerMaxHealth;
+        flashAlpha = 0f;
+        if (damageFlash != null)
+        {
+            Color c = damageFlash.color;
+            c.a = 0f;
+            damageFlash.color = c;
+        }
+    }
+
+    private void GameOver()
+    {
+        State = GameState.GameOver;
+        string msg = Loc.GameOver(Score, Wave);
+        SetStatus(msg.Replace("\n", " | "));
+        if (gameOverText != null) gameOverText.text = msg;
+        if (gameOverPanel != null) gameOverPanel.SetActive(true);
+    }
+
+    // ---------- Ammo ----------
+
+    public bool TryUseAmmo()
+    {
+        if (!IsPlaying || IsReloading) return false;
+
+        if (Ammo <= 0)
+        {
+            SetStatus(Loc.NoAmmo);
+            return false;
+        }
+
+        Ammo--;
+        UpdateHUD();
+        if (Ammo == 0) SetStatus(Loc.NoAmmo);
+        return true;
+    }
+
+    public void Reload()
+    {
+        if (!IsPlaying || IsReloading || Ammo >= startingAmmo) return;
+        StartCoroutine(ReloadRoutine());
+    }
+
+    private IEnumerator ReloadRoutine()
+    {
+        IsReloading = true;
+        Sfx.Reload();
+        SetStatus(Loc.Reloading);
+        yield return new WaitForSeconds(reloadTime);
+        Ammo = startingAmmo;
+        IsReloading = false;
+        UpdateHUD();
+        SetStatus(Loc.Reloaded);
+    }
+
+    // ---------- Events from the world ----------
+
+    public void WaveStarted(int wave)
+    {
+        Wave = wave;
+        UpdateHUD();
+        SetStatus(Loc.WaveStart(wave));
+    }
+
+    public void WaveCleared(int wave)
+    {
+        SetStatus(Loc.WaveCleared(wave));
+    }
+
+    public void MonsterSpawned()
+    {
+        SetStatus(Loc.MonsterSpotted);
+    }
+
+    public void MonsterDefeated()
+    {
+        Score += pointsPerMonster;
+        Ammo = Mathf.Min(startingAmmo, Ammo + ammoPerKill);
+        Sfx.Kill();
+        UpdateHUD();
+        SetStatus(Loc.Defeated(pointsPerMonster));
+    }
+
+    public void DamagePlayer(int damage)
+    {
+        if (!IsPlaying || damage <= 0) return;
+
+        PlayerHealth = Mathf.Max(0, PlayerHealth - damage);
+        flashAlpha = 0.6f;
+        Sfx.Hurt();
+        Handheld.Vibrate(); // no-op in the Editor / on devices without a vibrator
+        UpdateHUD();
+
+        if (PlayerHealth == 0) GameOver();
+    }
+
+    // ---------- HUD ----------
+
+    private void UpdateHUD()
+    {
+        if (scoreText != null) scoreText.text = Loc.ScoreLabel(Score);
+        if (ammoText != null) ammoText.text = Loc.AmmoLabel(Ammo, startingAmmo);
+        if (healthText != null) healthText.text = Loc.HealthLabel(PlayerHealth);
+        if (waveText != null) waveText.text = Loc.WaveLabel(Wave);
+
+        if (playerHealthFill != null)
+        {
+            float ratio = playerMaxHealth > 0 ? (float)PlayerHealth / playerMaxHealth : 0f;
+            playerHealthFill.anchorMax = new Vector2(Mathf.Clamp01(ratio), 1f);
+        }
+    }
+
+    private void SetStatus(string message)
+    {
+        if (statusText != null) statusText.text = message;
+        Debug.Log(message);
+    }
+}
+
+################################################################
+# FILE: Assets/Scripts/MonsterSpawner.cs
+################################################################
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.XR.ARFoundation;
+using UnityEngine.XR.ARSubsystems;
+
+public class MonsterSpawner : MonoBehaviour
+{
+    [Header("References")]
+    [SerializeField] private GameObject monsterPrefab;
+    [SerializeField] private Camera arCamera;
+    [SerializeField] private ARRaycastManager raycastManager;      // optional: places monsters on detected planes
+    [SerializeField] private EnvironmentController environment;    // optional: night = more monsters
+
+    [Header("Placement")]
+    [SerializeField] private float minSpawnDistance = 2.5f;
+    [SerializeField] private float maxSpawnDistance = 4.5f;
+    [SerializeField] private float maxYawOffset = 40f;             // spread in front of the player (degrees)
+    [SerializeField] private float fallbackCameraHeight = 1.3f;    // used when no AR plane has been found yet
+
+    [Header("Waves")]
+    [SerializeField] private int baseMonstersPerWave = 2;
+    [SerializeField] private int extraMonstersPerWave = 1;
+    [SerializeField] private int maxAlive = 3;
+    [SerializeField] private float spawnInterval = 3f;
+    [SerializeField] private float timeBetweenWaves = 4f;
+
+    public int CurrentWave { get; private set; }
+    public GameObject CurrentMonster { get; private set; }
+
+    private readonly List<ARRaycastHit> hits = new List<ARRaycastHit>();
+    private Coroutine huntRoutine;
+    private bool hasGround;
+    private float groundY;
+    private bool subscribed;
+
+    public void Configure(GameObject prefab, Camera cam, ARRaycastManager raycast, EnvironmentController env)
+    {
+        monsterPrefab = prefab;
+        arCamera = cam;
+        raycastManager = raycast;
+        environment = env;
+    }
+
+    private void Start()
+    {
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.OnRestart += HandleRestart;
+            subscribed = true;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (subscribed && GameManager.Instance != null)
+            GameManager.Instance.OnRestart -= HandleRestart;
+    }
+
+    private void HandleRestart()
+    {
+        StopHunt();
+        CurrentWave = 0;
+        StartHunt();
+    }
+
+    // ---------- Public API (hook to UI buttons) ----------
+
+    // Starts the wave system. Safe to call more than once.
+    public void StartHunt()
+    {
+        if (huntRoutine != null) return;
+        if (GameManager.Instance != null) GameManager.Instance.BeginHunt();
+        huntRoutine = StartCoroutine(HuntLoop());
+    }
+
+    public void StopHunt()
+    {
+        if (huntRoutine != null) StopCoroutine(huntRoutine);
+        huntRoutine = null;
+    }
+
+    // Old behaviour kept for compatibility: spawn a single monster in front of the player.
+    public void SpawnMonster()
+    {
+        if (GameManager.Instance != null) GameManager.Instance.BeginHunt();
+
+        if (CurrentMonster != null)
+        {
+            MonsterHealth old = CurrentMonster.GetComponent<MonsterHealth>();
+            if (old != null) old.Despawn(); else Destroy(CurrentMonster);
+        }
+
+        SpawnOne(Mathf.Max(1, CurrentWave));
+    }
+
+    // ---------- Waves ----------
+
+    private bool IsPlaying()
+    {
+        return GameManager.Instance == null || GameManager.Instance.IsPlaying;
+    }
+
+    private IEnumerator HuntLoop()
+    {
+        yield return new WaitForSeconds(1f); // give AR a moment to find the floor
+
+        while (IsPlaying())
+        {
+            CurrentWave++;
+            int count = baseMonstersPerWave + (CurrentWave - 1) * extraMonstersPerWave;
+            if (GameManager.Instance != null) GameManager.Instance.WaveStarted(CurrentWave);
+
+            for (int i = 0; i < count; i++)
+            {
+                while (MonsterHealth.ActiveCount >= maxAlive && IsPlaying())
+                    yield return null;
+                if (!IsPlaying()) break;
+
+                SpawnOne(CurrentWave);
+
+                float multiplier = environment != null ? environment.MonsterSpawnMultiplier : 1f;
+                yield return new WaitForSeconds(spawnInterval / Mathf.Max(0.3f, multiplier));
+            }
+
+            while (MonsterHealth.ActiveCount > 0 && IsPlaying())
+                yield return null;
+            if (!IsPlaying()) break;
+
+            if (GameManager.Instance != null) GameManager.Instance.WaveCleared(CurrentWave);
+            yield return new WaitForSeconds(timeBetweenWaves);
+        }
+
+        huntRoutine = null;
+    }
+
+    // ---------- Spawning ----------
+
+    private void SpawnOne(int wave)
+    {
+        if (monsterPrefab == null || arCamera == null)
+        {
+            Debug.LogError("MonsterSpawner: assign Monster Prefab and AR Camera (or use DarkEarthBootstrap).");
+            return;
+        }
+
+        Vector3 position;
+        if (!TryGetPlanePosition(out position))
+            position = GetFallbackPosition();
+
+        // Face the player (horizontal only). The old version faced the same way as the camera, i.e. showed its back.
+        Vector3 toCamera = arCamera.transform.position - position;
+        toCamera.y = 0f;
+        if (toCamera.sqrMagnitude < 0.001f) toCamera = -arCamera.transform.forward;
+        Quaternion rotation = Quaternion.LookRotation(toCamera.normalized, Vector3.up);
+
+        GameObject go = Instantiate(monsterPrefab, position, rotation);
+        go.SetActive(true);
+        SnapFeetToGround(go, position.y);
+
+        MonsterHealth health = go.GetComponent<MonsterHealth>();
+        if (health == null) health = go.AddComponent<MonsterHealth>();
+        health.SetCamera(arCamera.transform);
+        health.ScaleHealth(1f + 0.15f * (wave - 1));
+
+        MonsterAI ai = go.GetComponent<MonsterAI>();
+        if (ai == null) ai = go.AddComponent<MonsterAI>();
+        ai.SetTarget(arCamera.transform);
+        ai.SetDifficulty(wave);
+
+        CurrentMonster = go;
+        if (GameManager.Instance != null) GameManager.Instance.MonsterSpawned();
+    }
+
+    // Uses AR Foundation plane detection when available.
+    private bool TryGetPlanePosition(out Vector3 position)
+    {
+        position = Vector3.zero;
+        if (raycastManager == null || arCamera == null) return false;
+
+        for (int attempt = 0; attempt < 8; attempt++)
+        {
+            Vector2 screenPoint = new Vector2(
+                Random.Range(0.2f, 0.8f) * Screen.width,
+                Random.Range(0.2f, 0.5f) * Screen.height);
+
+            if (!raycastManager.Raycast(screenPoint, hits, TrackableType.PlaneWithinPolygon) || hits.Count == 0)
+                continue;
+
+            Pose pose = hits[0].pose;
+            if (Vector3.Dot(pose.up, Vector3.up) < 0.8f) continue; // floors only, not walls
+
+            Vector3 flat = pose.position - arCamera.transform.position;
+            flat.y = 0f;
+            float d = flat.magnitude;
+            if (d < minSpawnDistance || d > maxSpawnDistance + 2f) continue;
+
+            hasGround = true;
+            groundY = pose.position.y;
+            position = pose.position;
+            return true;
+        }
+        return false;
+    }
+
+    // Used when no plane is known: a point in front of the player at an estimated floor height.
+    // The direction is flattened, so looking down at the floor no longer buries the monster.
+    private Vector3 GetFallbackPosition()
+    {
+        Transform cam = arCamera.transform;
+
+        Vector3 forward = Vector3.ProjectOnPlane(cam.forward, Vector3.up);
+        if (forward.sqrMagnitude < 0.01f) forward = Vector3.ProjectOnPlane(cam.up, Vector3.up);
+        if (forward.sqrMagnitude < 0.01f) forward = Vector3.forward;
+        forward.Normalize();
+
+        forward = Quaternion.AngleAxis(Random.Range(-maxYawOffset, maxYawOffset), Vector3.up) * forward;
+
+        float distance = Random.Range(minSpawnDistance, maxSpawnDistance);
+        Vector3 position = cam.position + forward * distance;
+        position.y = hasGround ? groundY : cam.position.y - fallbackCameraHeight;
+        return position;
+    }
+
+    // Moves the monster up/down so the lowest point of its mesh touches the ground.
+    private static void SnapFeetToGround(GameObject go, float groundHeight)
+    {
+        Renderer[] renderers = go.GetComponentsInChildren<Renderer>();
+        if (renderers.Length == 0) return;
+
+        Bounds bounds = renderers[0].bounds;
+        for (int i = 1; i < renderers.Length; i++)
+            bounds.Encapsulate(renderers[i].bounds);
+
+        go.transform.position += Vector3.up * (groundHeight - bounds.min.y);
+    }
+}
+
+################################################################
+# FILE: Assets/Scripts/MonsterHealth.cs
+################################################################
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+public class MonsterHealth : MonoBehaviour
+{
+    // Number of living monsters. Used by the wave system.
+    public static int ActiveCount { get; private set; }
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStatics() { ActiveCount = 0; }
+
+    [Header("Monster")]
+    [SerializeField] private int maxHealth = 100;
+
+    [Header("Optional UI / effects")]
+    [SerializeField] private Slider healthSlider;
+    [SerializeField] private GameObject defeatedEffect;
+    [SerializeField] private Transform healthBarRoot;   // billboarded towards the camera
+    [SerializeField] private Transform healthBarFill;   // scaled on X (pivot on the left)
+    [SerializeField] private Color hitFlashColor = Color.white;
+
+    private int currentHealth;
+    private bool defeated;
+    private bool counted;
+    private Transform cam;
+    private readonly List<Renderer> flashRenderers = new List<Renderer>();
+    private readonly List<Color> baseColors = new List<Color>();
+
+    private void Awake()
+    {
+        ActiveCount++;
+        counted = true;
+        currentHealth = maxHealth;
+
+        foreach (Renderer r in GetComponentsInChildren<Renderer>())
+        {
+            if (healthBarRoot != null && r.transform.IsChildOf(healthBarRoot)) continue;
+            if (r is ParticleSystemRenderer) continue;
+            Material shared = r.sharedMaterial;
+            if (shared == null) continue;
+            if (!shared.HasProperty("_Color") && !shared.HasProperty("_BaseColor")) continue;
+
+            flashRenderers.Add(r);
+            baseColors.Add(r.material.color); // creates a per-monster material instance
+        }
+    }
+
+    private void Start()
+    {
+        if (cam == null && Camera.main != null) cam = Camera.main.transform;
+        UpdateHealthUI();
+    }
+
+    private void LateUpdate()
+    {
+        if (healthBarRoot != null && cam != null)
+            healthBarRoot.rotation = cam.rotation;
+    }
+
+    private void OnDestroy() { Release(); }
+
+    // ---------- Setup (called by the spawner / bootstrap) ----------
+
+    public void SetCamera(Transform cameraTransform) { cam = cameraTransform; }
+
+    public void ConfigureHealthBar(Transform root, Transform fill)
+    {
+        healthBarRoot = root;
+        healthBarFill = fill;
+    }
+
+    public void ScaleHealth(float multiplier)
+    {
+        maxHealth = Mathf.Max(1, Mathf.RoundToInt(maxHealth * multiplier));
+        currentHealth = maxHealth;
+        UpdateHealthUI();
+    }
+
+    // ---------- Gameplay ----------
+
+    public void TakeDamage(int damage)
+    {
+        if (defeated || damage <= 0) return;
+
+        currentHealth = Mathf.Max(0, currentHealth - damage);
+        UpdateHealthUI();
+
+        if (currentHealth == 0)
+        {
+            Defeat();
+        }
+        else
+        {
+            Sfx.Hit();
+            StopCoroutine(nameof(HitFlash));
+            StartCoroutine(nameof(HitFlash));
+        }
+    }
+
+    // Removes the monster immediately (used when restarting).
+    public void Despawn()
+    {
+        Release();
+        Destroy(gameObject);
+    }
+
+    private void UpdateHealthUI()
+    {
+        if (healthSlider != null)
+        {
+            healthSlider.maxValue = maxHealth;
+            healthSlider.value = currentHealth;
+        }
+
+        if (healthBarFill != null)
+        {
+            float ratio = maxHealth > 0 ? (float)currentHealth / maxHealth : 0f;
+            healthBarFill.localScale = new Vector3(Mathf.Clamp01(ratio), 1f, 1f);
+        }
+    }
+
+    private void Defeat()
+    {
+        defeated = true;
+        Release();
+
+        if (GameManager.Instance != null)
+            GameManager.Instance.MonsterDefeated();
+
+        foreach (Collider c in GetComponentsInChildren<Collider>())
+            c.enabled = false;
+
+        MonsterAI ai = GetComponent<MonsterAI>();
+        if (ai != null) ai.enabled = false;
+
+        if (defeatedEffect != null)
+            Instantiate(defeatedEffect, transform.position, Quaternion.identity);
+
+        StopCoroutine(nameof(HitFlash));
+        StartCoroutine(ShrinkAndDestroy());
+    }
+
+    private IEnumerator HitFlash()
+    {
+        for (int i = 0; i < flashRenderers.Count; i++)
+            if (flashRenderers[i] != null) flashRenderers[i].material.color = hitFlashColor;
+
+        yield return new WaitForSeconds(0.08f);
+
+        for (int i = 0; i < flashRenderers.Count; i++)
+            if (flashRenderers[i] != null) flashRenderers[i].material.color = baseColors[i];
+    }
+
+    private IEnumerator ShrinkAndDestroy()
+    {
+        Vector3 start = transform.localScale;
+        const float duration = 0.3f;
+        float t = 0f;
+        while (t < duration)
+        {
+            t += Time.deltaTime;
+            transform.localScale = Vector3.Lerp(start, Vector3.zero, t / duration);
+            yield return null;
+        }
+        Destroy(gameObject);
+    }
+
+    private void Release()
+    {
+        if (!counted) return;
+        counted = false;
+        ActiveCount = Mathf.Max(0, ActiveCount - 1);
+    }
+}
+
+################################################################
+# FILE: Assets/Scripts/MonsterAI.cs
+################################################################
+using System.Collections;
+using UnityEngine;
+
+// Walks towards the player (on the horizontal plane only, so it stays on the
+// ground) and attacks when close enough.
+public class MonsterAI : MonoBehaviour
+{
+    [SerializeField] private float moveSpeed = 0.7f;      // meters / second
+    [SerializeField] private float turnSpeed = 6f;
+    [SerializeField] private float attackRange = 1.1f;    // horizontal distance to the camera
+    [SerializeField] private int attackDamage = 10;
+    [SerializeField] private float attackCooldown = 1.4f;
+    [SerializeField] private float firstAttackDelay = 1f; // grace period after spawning
+
+    private Transform target;
+    private float nextAttackTime;
+    private Vector3 baseScale;
+
+    private void Awake() { baseScale = transform.localScale; }
+
+    private void Start() { nextAttackTime = Time.time + firstAttackDelay; }
+
+    public void SetTarget(Transform t) { target = t; }
+
+    // Gets tougher every wave.
+    public void SetDifficulty(int wave)
+    {
+        int w = Mathf.Max(1, wave);
+        moveSpeed *= Mathf.Min(2f, 1f + 0.08f * (w - 1));
+        attackDamage += 2 * (w - 1);
+    }
+
+    private void Update()
+    {
+        if (GameManager.Instance != null && !GameManager.Instance.IsPlaying) return;
+
+        if (target == null)
+        {
+            if (Camera.main == null) return;
+            target = Camera.main.transform;
+        }
+
+        Vector3 toTarget = target.position - transform.position;
+        toTarget.y = 0f;
+        float distance = toTarget.magnitude;
+        if (distance < 0.01f) return;
+
+        Quaternion look = Quaternion.LookRotation(toTarget.normalized, Vector3.up);
+        transform.rotation = Quaternion.Slerp(transform.rotation, look, turnSpeed * Time.deltaTime);
+
+        if (distance > attackRange)
+        {
+            transform.position += toTarget.normalized * moveSpeed * Time.deltaTime;
+        }
+        else if (Time.time >= nextAttackTime)
+        {
+            nextAttackTime = Time.time + attackCooldown;
+            if (GameManager.Instance != null)
+                GameManager.Instance.DamagePlayer(attackDamage);
+            StartCoroutine(AttackPunch());
+        }
+    }
+
+    private IEnumerator AttackPunch()
+    {
+        const float duration = 0.18f;
+        float t = 0f;
+        while (t < duration)
+        {
+            t += Time.deltaTime;
+            float k = Mathf.Sin(t / duration * Mathf.PI);
+            transform.localScale = baseScale * (1f + 0.3f * k);
+            yield return null;
+        }
+        transform.localScale = baseScale;
+    }
+}
+
+################################################################
+# FILE: Assets/Scripts/WeaponController.cs
+################################################################
+using System;
+using UnityEngine;
+
+public class WeaponController : MonoBehaviour
+{
+    [SerializeField] private Camera arCamera;
+    [SerializeField] private float range = 30f;
+    [SerializeField] private int damage = 25;
+    [SerializeField] private float fireCooldown = 0.25f;
+    [SerializeField] private float aimAssistRadius = 0.15f; // forgiving aim on a phone
+    [SerializeField] private ParticleSystem muzzleFlash;
+    [SerializeField] private GameObject hitEffect;
+
+    private float nextFireTime;
+
+    public void Configure(Camera cam) { arCamera = cam; }
+
+    // Returns true if a shot was actually fired.
+    public bool TryFire()
+    {
+        if (arCamera == null) return false;
+        if (Time.time < nextFireTime) return false;
+
+        // Ammo is only spent when the shot really happens.
+        if (GameManager.Instance != null && !GameManager.Instance.TryUseAmmo())
+            return false;
+
+        nextFireTime = Time.time + fireCooldown;
+        Sfx.Shot();
+        if (muzzleFlash != null) muzzleFlash.Play();
+
+        Ray ray = new Ray(arCamera.transform.position, arCamera.transform.forward);
+        RaycastHit[] hits = Physics.SphereCastAll(ray, aimAssistRadius, range, ~0, QueryTriggerInteraction.Ignore);
+        Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
+
+        // Take the closest monster; AR plane colliders and other objects are ignored.
+        foreach (RaycastHit hit in hits)
+        {
+            MonsterHealth monster = hit.collider.GetComponentInParent<MonsterHealth>();
+            if (monster == null) continue;
+
+            monster.TakeDamage(damage);
+
+            if (hitEffect != null)
+            {
+                Vector3 point = hit.point == Vector3.zero ? monster.transform.position : hit.point;
+                Destroy(Instantiate(hitEffect, point, Quaternion.identity), 2f);
+            }
+            break;
+        }
+
+        return true;
+    }
+}
+
+################################################################
+# FILE: Assets/Scripts/FireButton.cs
+################################################################
+using UnityEngine;
+
+public class FireButton : MonoBehaviour
+{
+    [SerializeField] private WeaponController weapon;
+
+    public void Configure(WeaponController w) { weapon = w; }
+
+    // Connect this method to the UI Button's OnClick event.
+    public void OnFirePressed()
+    {
+        if (weapon == null) weapon = FindFirstObjectByType<WeaponController>();
+        if (weapon == null) return;
+
+        weapon.TryFire(); // ammo, cooldown and game state are all handled inside
+    }
+}
+
+################################################################
+# FILE: Assets/Scripts/EnvironmentController.cs
+################################################################
+using System;
+using UnityEngine;
+using TMPro;
+
+public class EnvironmentController : MonoBehaviour
+{
+    public enum Weather { Clear, Cloudy, Rain, Fog, Storm }
+    public enum DayPhase { Dawn, Day, Dusk, Night }
+
+    [Header("Local daylight settings - prototype defaults")]
+    [Range(0, 23)] [SerializeField] private int sunriseHour = 6;
+    [Range(0, 23)] [SerializeField] private int sunsetHour = 18;
+
+    [Header("Scene lighting")]
+    [SerializeField] private Light sceneSun;
+    [SerializeField] private float dayIntensity = 1.1f;
+    [SerializeField] private float nightIntensity = 0.12f;
+    [SerializeField] private Color dayLightColor = new Color(1f, 0.93f, 0.78f);
+    [SerializeField] private Color nightLightColor = new Color(0.35f, 0.43f, 0.68f);
+    [SerializeField] private Color dayAmbient = new Color(0.60f, 0.60f, 0.60f);
+    [SerializeField] private Color nightAmbient = new Color(0.10f, 0.12f, 0.20f);
+
+    [Header("Weather fog (affects virtual objects only, not the camera image)")]
+    [SerializeField] private bool useFogForWeather = true;
+
+    [Header("Optional HUD")]
+    [SerializeField] private TMP_Text environmentText;
+
+    [Header("Prototype weather setting")]
+    [SerializeField] private Weather currentWeather = Weather.Clear;
+
+    [Header("Ambient light input")]
+    [Range(0f, 1f)] [SerializeField] private float ambientBrightness = 0.5f;
+    [SerializeField] private bool useAmbientBrightness = false;
+
+    private float refreshTimer;
+
+    public DayPhase CurrentPhase { get; private set; }
+    public Weather CurrentWeather => currentWeather;
+
+    // More monsters at night and in bad weather. Used by MonsterSpawner.
+    public float MonsterSpawnMultiplier
+    {
+        get
+        {
+            float phase;
+            switch (CurrentPhase)
+            {
+                case DayPhase.Dawn: phase = 1.15f; break;
+                case DayPhase.Day: phase = 0.8f; break;
+                case DayPhase.Dusk: phase = 1.5f; break;
+                default: phase = 1.8f; break;
+            }
+
+            float weather;
+            switch (currentWeather)
+            {
+                case Weather.Cloudy: weather = 1.05f; break;
+                case Weather.Rain: weather = 1.15f; break;
+                case Weather.Fog: weather = 1.25f; break;
+                case Weather.Storm: weather = 1.35f; break;
+                default: weather = 1f; break;
+            }
+            return phase * weather;
+        }
+    }
+
+    public void Configure(Light sun, TMP_Text text)
+    {
+        if (sun != null) sceneSun = sun;
+        if (text != null) environmentText = text;
+    }
+
+    private void Start()
+    {
+        EnsureSun();
+        RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
+        UpdateEnvironment();
+    }
+
+    private void Update()
+    {
+        refreshTimer += Time.deltaTime;
+        if (refreshTimer >= 1f)
+        {
+            refreshTimer = 0f;
+            UpdateEnvironment();
+        }
+    }
+
+    public void SetWeather(Weather weather)
+    {
+        currentWeather = weather;
+        UpdateEnvironment();
+    }
+
+    // Future sensor integration can call this with a normalized 0..1 reading.
+    public void SetAmbientBrightness(float normalizedBrightness)
+    {
+        ambientBrightness = Mathf.Clamp01(normalizedBrightness);
+        useAmbientBrightness = true;
+        UpdateEnvironment();
+    }
+
+    public void SetDaylightHours(int localSunriseHour, int localSunsetHour)
+    {
+        sunriseHour = Mathf.Clamp(localSunriseHour, 0, 23);
+        sunsetHour = Mathf.Clamp(localSunsetHour, 0, 23);
+        UpdateEnvironment();
+    }
+
+    private void EnsureSun()
+    {
+        if (sceneSun != null) return;
+
+        foreach (Light l in FindObjectsByType<Light>(FindObjectsSortMode.None))
+        {
+            if (l.type == LightType.Directional) { sceneSun = l; return; }
+        }
+
+        GameObject go = new GameObject("Sun");
+        go.transform.rotation = Quaternion.Euler(50f, -30f, 0f);
+        sceneSun = go.AddComponent<Light>();
+        sceneSun.type = LightType.Directional;
+    }
+
+    private void UpdateEnvironment()
+    {
+        float hour = (float)DateTime.Now.TimeOfDay.TotalHours;
+        CurrentPhase = GetPhase(hour);
+
+        float blend = CurrentPhase == DayPhase.Day ? 1f :
+                      CurrentPhase == DayPhase.Night ? 0f :
+                      CurrentPhase == DayPhase.Dawn ? 0.45f : 0.35f;
+
+        if (useAmbientBrightness)
+            blend = Mathf.Lerp(blend, ambientBrightness, 0.45f);
+
+        switch (currentWeather)
+        {
+            case Weather.Cloudy: blend *= 0.78f; break;
+            case Weather.Rain: blend *= 0.62f; break;
+            case Weather.Fog: blend *= 0.7f; break;
+            case Weather.Storm: blend *= 0.42f; break;
+        }
+
+        if (sceneSun != null)
+        {
+            sceneSun.intensity = Mathf.Lerp(nightIntensity, dayIntensity, blend);
+            sceneSun.color = Color.Lerp(nightLightColor, dayLightColor, blend);
+        }
+
+        // Ambient light keeps monsters visible at night instead of pure black silhouettes.
+        RenderSettings.ambientLight = Color.Lerp(nightAmbient, dayAmbient, blend);
+
+        ApplyWeatherFog(blend);
+
+        if (environmentText != null)
+            environmentText.text = Loc.Phase(CurrentPhase) + " | " + Loc.Weather(currentWeather);
+    }
+
+    private void ApplyWeatherFog(float blend)
+    {
+        if (!useFogForWeather) return;
+
+        float density;
+        switch (currentWeather)
+        {
+            case Weather.Rain: density = 0.02f; break;
+            case Weather.Fog: density = 0.06f; break;
+            case Weather.Storm: density = 0.035f; break;
+            default: density = 0f; break;
+        }
+
+        RenderSettings.fog = density > 0f;
+        if (density > 0f)
+        {
+            RenderSettings.fogMode = FogMode.ExponentialSquared;
+            RenderSettings.fogDensity = density;
+            RenderSettings.fogColor = Color.Lerp(new Color(0.08f, 0.09f, 0.12f), new Color(0.65f, 0.67f, 0.70f), blend);
+        }
+    }
+
+    // Dawn/dusk last one hour before and after sunrise/sunset. Works across midnight too.
+    private DayPhase GetPhase(float hour)
+    {
+        if (InWindow(hour, sunriseHour - 1f, sunriseHour + 1f)) return DayPhase.Dawn;
+        if (InWindow(hour, sunsetHour - 1f, sunsetHour + 1f)) return DayPhase.Dusk;
+        if (InWindow(hour, sunriseHour + 1f, sunsetHour - 1f)) return DayPhase.Day;
+        return DayPhase.Night;
+    }
+
+    private static float Wrap24(float x) { return ((x % 24f) + 24f) % 24f; }
+
+    private static bool InWindow(float hour, float start, float end)
+    {
+        start = Wrap24(start);
+        end = Wrap24(end);
+        return start <= end ? (hour >= start && hour < end) : (hour >= start || hour < end);
+    }
+}
+
+################################################################
+# FILE: Assets/Scripts/Loc.cs
+################################################################
+// Simple two-language string table (English / Hebrew).
+// NOTE: TextMeshPro's default font has no Hebrew glyphs and no RTL support.
+// Keep Hebrew OFF until you add a Hebrew font asset + an RTL fix (see README).
+public static class Loc
+{
+    public static bool Hebrew;
+
+    private static string T(string en, string he) { return Hebrew ? he : en; }
+
+    // Status messages
+    public static string MissionReady => T("Ready. Press HUNT to begin!", "מוכנים. לחץ על ציד כדי להתחיל!");
+    public static string HuntBegins => T("The hunt begins!", "הציד התחיל!");
+    public static string MonsterSpotted => T("Monster spotted! Aim and fire.", "מפלצת אותרה! כוון ולחץ ירי.");
+    public static string NoAmmo => T("Out of ammo. Reload!", "אין תחמושת. טען מחדש.");
+    public static string Reloading => T("Reloading...", "טוען...");
+    public static string Reloaded => T("Reloaded.", "התחמושת נטענה.");
+    public static string Defeated(int pts) => T("Monster down! +" + pts, "המפלצת הובסה! +" + pts + " נקודות.");
+    public static string WaveStart(int w) => T("Wave " + w + " incoming!", "גל " + w + " מתקרב!");
+    public static string WaveCleared(int w) => T("Wave " + w + " cleared!", "גל " + w + " נוקה!");
+    public static string GameOver(int score, int wave) =>
+        T("GAME OVER\nScore: " + score + "\nReached wave " + wave,
+          "המשחק נגמר\nניקוד: " + score + "\nהגעת לגל " + wave);
+
+    // HUD labels
+    public static string ScoreLabel(int s) => T("Score: " + s, "ניקוד: " + s);
+    public static string AmmoLabel(int a, int max) => T("Ammo: " + a + "/" + max, "תחמושת: " + a + "/" + max);
+    public static string HealthLabel(int hp) => T("HP " + hp, "חיים " + hp);
+    public static string WaveLabel(int w) => T("Wave: " + w, "גל: " + w);
+
+    // Buttons
+    public static string Fire => T("FIRE", "ירה");
+    public static string Reload => T("RELOAD", "טען");
+    public static string Hunt => T("HUNT", "ציד");
+    public static string Restart => T("RESTART", "התחל מחדש");
+
+    // Environment
+    public static string Phase(EnvironmentController.DayPhase p)
+    {
+        switch (p)
+        {
+            case EnvironmentController.DayPhase.Dawn: return T("Dawn", "זריחה");
+            case EnvironmentController.DayPhase.Day: return T("Day", "יום");
+            case EnvironmentController.DayPhase.Dusk: return T("Dusk", "שקיעה");
+            default: return T("Night", "לילה");
+        }
+    }
+
+    public static string Weather(EnvironmentController.Weather w)
+    {
+        switch (w)
+        {
+            case EnvironmentController.Weather.Cloudy: return T("Cloudy", "מעונן");
+            case EnvironmentController.Weather.Rain: return T("Rain", "גשם");
+            case EnvironmentController.Weather.Fog: return T("Fog", "ערפל");
+            case EnvironmentController.Weather.Storm: return T("Storm", "סערה");
+            default: return T("Clear", "בהיר");
+        }
+    }
+}
+
+################################################################
+# FILE: Assets/Scripts/Sfx.cs
+################################################################
+using UnityEngine;
+
+// Tiny procedural sound effects so the prototype has audio feedback
+// without needing any audio assets. Replace with real clips later.
+public static class Sfx
+{
+    private static AudioSource source;
+    private static AudioClip shot, hit, hurt, kill, reload;
+
+    public static void Shot()   { if (shot == null)   shot   = Make("shot",   0.15f, 520f, 90f,  0.55f, 0.45f); Play(shot); }
+    public static void Hit()    { if (hit == null)    hit    = Make("hit",    0.10f, 300f, 160f, 0.35f, 0.55f); Play(hit); }
+    public static void Hurt()   { if (hurt == null)   hurt   = Make("hurt",   0.25f, 140f, 60f,  0.30f, 0.70f); Play(hurt); }
+    public static void Kill()   { if (kill == null)   kill   = Make("kill",   0.30f, 200f, 700f, 0.10f, 0.50f); Play(kill); }
+    public static void Reload() { if (reload == null) reload = Make("reload", 0.12f, 900f, 500f, 0.05f, 0.40f); Play(reload); }
+
+    private static AudioClip Make(string name, float duration, float f0, float f1, float noise, float volume)
+    {
+        const int rate = 22050;
+        int n = Mathf.Max(1, (int)(rate * duration));
+        float[] data = new float[n];
+        float phase = 0f;
+        System.Random rnd = new System.Random(name.GetHashCode());
+
+        for (int i = 0; i < n; i++)
+        {
+            float t = i / (float)n;
+            float f = Mathf.Lerp(f0, f1, t);
+            phase += 2f * Mathf.PI * f / rate;
+            float tone = Mathf.Sin(phase);
+            float nz = (float)(rnd.NextDouble() * 2.0 - 1.0);
+            float env = (1f - t) * (1f - t);
+            data[i] = Mathf.Lerp(tone, nz, noise) * env * volume;
+        }
+
+        AudioClip clip = AudioClip.Create(name, n, 1, rate, false);
+        clip.SetData(data, 0);
+        return clip;
+    }
+
+    private static void Play(AudioClip clip)
+    {
+        if (source == null)
+        {
+            GameObject go = new GameObject("Sfx");
+            Object.DontDestroyOnLoad(go);
+            source = go.AddComponent<AudioSource>();
+            source.spatialBlend = 0f;
+            source.playOnAwake = false;
+        }
+        source.PlayOneShot(clip);
+    }
+}
+
+################################################################
+# FILE: Assets/Scripts/EditorAimHelper.cs
+################################################################
+using UnityEngine;
+#if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
+using UnityEngine.InputSystem;
+#endif
+
+// Editor-only convenience: hold the RIGHT mouse button and drag to look around,
+// so you can test aiming and shooting without a phone. Does nothing in builds.
+public class EditorAimHelper : MonoBehaviour
+{
+#if UNITY_EDITOR
+    [SerializeField] private float sensitivity = 0.15f;
+    private float yaw;
+    private float pitch;
+
+    private void Start()
+    {
+        Vector3 e = transform.eulerAngles;
+        yaw = e.y;
+        pitch = e.x > 180f ? e.x - 360f : e.x;
+    }
+
+    private void Update()
+    {
+        bool held;
+        Vector2 delta;
+#if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
+        if (Mouse.current == null) return;
+        held = Mouse.current.rightButton.isPressed;
+        delta = Mouse.current.delta.ReadValue();
+#else
+        held = Input.GetMouseButton(1);
+        delta = new Vector2(Input.GetAxis("Mouse X"), Input.GetAxis("Mouse Y")) * 10f;
+#endif
+        if (!held) return;
+
+        yaw += delta.x * sensitivity;
+        pitch = Mathf.Clamp(pitch - delta.y * sensitivity, -80f, 80f);
+        transform.rotation = Quaternion.Euler(pitch, yaw, 0f);
+    }
+#endif
+}
