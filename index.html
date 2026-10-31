@@ -79,7 +79,7 @@ const say=s=>$('st').textContent=s;
 function hud(){$('sc').textContent=t('score')+': '+score+(SV.best?'  ('+t('best')+' '+SV.best+')':'');$('am').textContent=t('ammo')+': '+ammo+'/'+WP().mag+'  ·  '+SV.res;$('wv').textContent=t('wave')+': '+wave;$('hf').style.width=Math.max(0,hp)+'%';$('ht').textContent='HP '+Math.max(0,hp);$('eat').textContent='🍖 '+t('eat')+' '+SV.food}
 // ===== gameplay =====
 const alive=()=>mons.filter(m=>!m.dy).length;
-function spawn(){const a=yaw+rnd(-.7,.7),d=rnd(3.5,6),w=wave,mh=100*(1+.15*(w-1));mons.push({x:Math.sin(a)*d,z:Math.cos(a)*d,hp:mh,mx:mh,sp:.7*Math.min(2,1+.08*(w-1)),dmg:10+2*(w-1),na:T+1000,fl:0,pu:0,dy:0,id:Math.random()*6});say(t('spot'))}
+function spawn(){const a=yaw+rnd(-.7,.7),d=rnd(12,18),w=wave,mh=100*(1+.15*(w-1));mons.push({x:Math.sin(a)*d,z:Math.cos(a)*d,hp:mh,mx:mh,sp:.32*Math.min(1.5,1+.06*(w-1)),dmg:10+2*(w-1),na:T+1000,fl:0,pu:0,dy:0,id:Math.random()*6});say(t('spot'))}
 function fire(){if(st!=='play'||T<cdT||relT)return;const w=WP();if(ammo<=0){say(t('noammo'));return}ammo--;cdT=T+w.cd;mz=T+80;snd('shot');let bm=null,bz=1e9;
  for(const m of mons){if(m.dy)continue;const p=P(m.x,.9,m.z);if(!p)continue;const r=.6*(w.sp||1)*F/p[2],hh=1*F/p[2];if(Math.abs(W/2-p[0])<r&&Math.abs(H/2-p[1])<hh&&p[2]<bz){bz=p[2];bm=m}}
  if(bm){bm.hp-=w.dmg;bm.fl=T+80;hm=T+150;if(bm.hp<=0){bm.dy=.3;score+=100;SV.res+=2;save();snd('kill');say(t('kill'))}else snd('hit')}hud()}
