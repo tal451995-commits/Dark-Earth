@@ -281,3 +281,18 @@ public class MonsterSpawner : MonoBehaviour
         go.transform.position += Vector3.up * (groundHeight - bounds.min.y);
     }
 }
+public class MonsterAnchorCleanup : MonoBehaviour
+{
+    private ARAnchor anchor;
+
+    public void Initialize(ARAnchor value)
+    {
+        anchor = value;
+    }
+
+    private void OnDestroy()
+    {
+        if (anchor != null)
+            Destroy(anchor.gameObject);
+    }
+}
