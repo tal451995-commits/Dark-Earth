@@ -1,4 +1,4 @@
-const CACHE_NAME = "dark-earth-v3";
+const CACHE_NAME = "dark-earth-v4";
 
 const APP_FILES = [
   "./",
