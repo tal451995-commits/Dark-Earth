@@ -10,6 +10,7 @@ public class MonsterSpawner : MonoBehaviour
     [SerializeField] private GameObject monsterPrefab;
     [SerializeField] private Camera arCamera;
     [SerializeField] private ARRaycastManager raycastManager;      // optional: places monsters on detected planes
+    [SerializeField] private ARAnchorManager anchorManager;
     [SerializeField] private EnvironmentController environment;    // optional: night = more monsters
 
     [Header("Placement")]
