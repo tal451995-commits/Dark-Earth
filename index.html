@@ -127,7 +127,7 @@ function dm(m,p,sc,pu){
  const hc=L(0,1.52),g2=x.createRadialGradient(hc[0]-.05*u,hc[1]-.06*u,.02*u,hc[0],hc[1],.24*u);g2.addColorStop(0,fl?'#fff':'#8a9c80');g2.addColorStop(1,sk);
  x.fillStyle=fl?'#fff':'#cfc9ad';for(const s of[-1,1]){x.beginPath();x.moveTo(...L(s*.08,1.7));x.lineTo(...L(s*.2,1.92));x.lineTo(...L(s*.15,1.66));x.fill()}
  x.fillStyle=g2;x.beginPath();x.ellipse(hc[0],hc[1],.19*u,.22*u,0,0,6.283);x.fill();
- for(const s of[-1,1]){const e=L(s*.08,1.56);x.fillStyle='#000';x.beginPath();x.ellipse(e[0],e[1],.055*u,.04*u,0,0,6.283);x.fill();x.fillStyle='#ff3020';x.shadowColor='#f20';x.shadowBlur=.08*u;x.beginPath();x.arc(e[0],e[1],.022*u,0,6.283);x.fill();x.shadowBlur=0}
+ for(const s of[-1,1]){const e=L(s*.08,1.56);x.fillStyle='#000';x.beginPath();x.ellipse(e[0],e[1],.055*u,.04*u,0,0,6.283);x.fill();x.fillStyle=pal[2];;x.shadowColor='#f20';x.shadowBlur=.08*u;x.beginPath();x.arc(e[0],e[1],.022*u,0,6.283);x.fill();x.shadowBlur=0}
  const mo=L(0,1.43);x.fillStyle='#120606';x.beginPath();x.ellipse(mo[0],mo[1],.1*u,.045*u+Math.max(0,Math.sin(q*2))*.02*u,0,0,6.283);x.fill();
  x.fillStyle='#e8e2c8';for(let i=-2;i<=2;i++){x.beginPath();x.moveTo(mo[0]+(i-.5)*.035*u,mo[1]-.03*u);x.lineTo(mo[0]+i*.035*u,mo[1]+.015*u);x.lineTo(mo[0]+(i+.5)*.035*u,mo[1]-.03*u);x.fill()}x.restore()}
 function draw(){const b=dayB()[0],v=$('v');
