@@ -1,8 +1,12 @@
-const CACHE_NAME = "dark-earth-v1";
+const CACHE_NAME = "dark-earth-v2";
+
 const APP_FILES = [
   "./",
   "./index.html",
-  "./manifest.webmanifest"
+  "./manifest.webmanifest",
+  "./icons/icon-192.png",
+  "./icons/icon-512.png",
+  "./icons/apple-touch-icon.png"
 ];
 
 self.addEventListener("install", event => {
@@ -17,7 +21,9 @@ self.addEventListener("activate", event => {
     caches.keys().then(keys =>
       Promise.all(
         keys
-          .filter(key => key !== CACHE_NAME)
+          .filter(key =>
+            key.startsWith("dark-earth-") && key !== CACHE_NAME
+          )
           .map(key => caches.delete(key))
       )
     )
@@ -29,20 +35,26 @@ self.addEventListener("fetch", event => {
   if (event.request.method !== "GET") return;
 
   const url = new URL(event.request.url);
-
   if (url.origin !== self.location.origin) return;
 
   if (event.request.mode === "navigate") {
     event.respondWith(
       fetch(event.request)
         .then(response => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then(cache =>
-            cache.put("./index.html", copy)
-          );
+          if (response.ok) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then(cache =>
+              cache.put(event.request, copy)
+            );
+          }
           return response;
         })
-        .catch(() => caches.match("./index.html"))
+        .catch(async () => {
+          return (
+            await caches.match(event.request) ||
+            await caches.match("./index.html")
+          );
+        })
     );
     return;
   }
