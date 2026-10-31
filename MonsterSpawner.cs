@@ -35,13 +35,20 @@ public class MonsterSpawner : MonoBehaviour
     private float groundY;
     private bool subscribed;
 
-    public void Configure(GameObject prefab, Camera cam, ARRaycastManager raycast, EnvironmentController env)
-    {
-        monsterPrefab = prefab;
-        arCamera = cam;
-        raycastManager = raycast;
-        environment = env;
-    }
+    public void Configure(
+    GameObject prefab,
+    Camera cam,
+    ARRaycastManager raycast,
+    EnvironmentController env)
+{
+    monsterPrefab = prefab;
+    arCamera = cam;
+    raycastManager = raycast;
+    environment = env;
+
+    if (anchorManager == null)
+        anchorManager = FindFirstObjectByType<ARAnchorManager>();
+}
 
     private void Start()
     {
