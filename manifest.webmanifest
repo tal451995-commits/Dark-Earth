@@ -1,27 +1,30 @@
 {
-  "id": "./dark-earth-app-v3",
+  "id": "/Dark-Earth/",
   "name": "DARK EARTH",
   "short_name": "DARK EARTH",
   "description": "Fight monsters in the real world",
-  "start_url": "./?source=pwa-v2",
-  "scope": "./",
+  "start_url": "/Dark-Earth/",
+  "scope": "/Dark-Earth/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#07080d",
   "theme_color": "#07080d",
+  "prefer_related_applications": false,
   "icons": [
     {
-      "src": "./icons/icon-192.png",
+      "src": "/Dark-Earth/icons/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "./icons/icon-512.png",
+      "src": "/Dark-Earth/icons/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any"
     },
     {
-      "src": "./icons/apple-touch-icon.png",
+      "src": "/Dark-Earth/icons/apple-touch-icon.png",
       "sizes": "180x180",
       "type": "image/png"
     }
