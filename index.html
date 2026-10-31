@@ -79,7 +79,7 @@ const say=s=>$('st').textContent=s;
 function hud(){$('sc').textContent=t('score')+': '+score+(SV.best?'  ('+t('best')+' '+SV.best+')':'');$('am').textContent=t('ammo')+': '+ammo+'/'+WP().mag+'  ·  '+SV.res;$('wv').textContent=t('wave')+': '+wave;$('hf').style.width=Math.max(0,hp)+'%';$('ht').textContent='HP '+Math.max(0,hp);$('eat').textContent='🍖 '+t('eat')+' '+SV.food}
 // ===== gameplay =====
 const alive=()=>mons.filter(m=>!m.dy).length;
-function spawn(){const a=yaw+rnd(-.7,.7),d=rnd(12,18),w=wave,mh=100*(1+.15*(w-1));mons.push({x:Math.sin(a)*d,z:Math.cos(a)*d,hp:mh,mx:mh,sp:.32*Math.min(1.5,1+.06*(w-1)),dmg:10+2*(w-1),na:T+1000,fl:0,pu:0,dy:0,id:Math.random()*6});say(t('spot'))}
+function spawn(){const a=yaw+rnd(-.7,.7),d=rnd(12,18),w=wave,mh=100*(1+.15*(w-1));mons.push({x:Math.sin(a)*d,z:Math.cos(a)*d,hp:mh,mx:mh,sp:.32*Math.min(1.5,1+.06*(w-1)),dmg:10+2*(w-1),na:T+1000,fl:0,pu:0,dy:0,id:Math.random()*6,spawnT:T});say(t('spot'))}
 function fire(){if(st!=='play'||T<cdT||relT)return;const w=WP();if(ammo<=0){say(t('noammo'));return}ammo--;cdT=T+w.cd;mz=T+80;snd('shot');let bm=null,bz=1e9;
  for(const m of mons){if(m.dy)continue;const p=P(m.x,.9,m.z);if(!p)continue;const r=.6*(w.sp||1)*F/p[2],hh=1*F/p[2];if(Math.abs(W/2-p[0])<r&&Math.abs(H/2-p[1])<hh&&p[2]<bz){bz=p[2];bm=m}}
  if(bm){bm.hp-=w.dmg;bm.fl=T+80;hm=T+150;if(bm.hp<=0){bm.dy=.3;score+=100;SV.res+=2;save();snd('kill');say(t('kill'))}else snd('hit')}hud()}
@@ -106,7 +106,7 @@ function bg(b){const sh=mix([5,7,15],[111,168,220],b),sl=mix([15,21,48],[207,227
  for(const o of B){const cx=Math.sin(o.a)*o.d,cz=Math.cos(o.a)*o.d,tx=Math.cos(o.a)*o.w/2,tz=-Math.sin(o.a)*o.w/2,l=P(cx-tx,0,cz-tz),r=P(cx+tx,0,cz+tz),q=P(cx,o.h,cz);if(!l||!r||!q)continue;x.fillStyle=rgb(mix(mix([20,22,30],[90,92,100],b),sl,Math.min(.6,o.d/80)).map(v=>v*o.s));const x0=Math.min(l[0],r[0]),w=Math.abs(r[0]-l[0]);x.fillRect(x0,q[1],w,l[1]-q[1]);if(b<.5){x.fillStyle='rgba(255,220,120,.8)';for(const z of o.l)x.fillRect(x0+z*w*.8,q[1]+(l[1]-q[1])*z,w*.08,w*.08)}}}
 function dm(m,p,sc,pu){
  const u=F/p[2]*sc*pu,X=p[0],Y=p[1];
- const q=T*.006+m.id,sw=Math.sin(q);
+ const q=(T-m.spawnT)*.006+m.id,sw=Math.sin(q);
  const bob=Math.abs(Math.cos(q))*.05,fl=m.fl>T;
  const palettes=[
   ['#4f5f49','#1f271e','#ff3020'],
