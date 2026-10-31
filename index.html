@@ -172,12 +172,57 @@ $('hm').onclick=toMenu;$('oMenu').onclick=toMenu;$('mLang').onclick=()=>lang(SV.
 addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();fire()}else if(e.code==='KeyR')reload();else if(e.code==='KeyE')eat();else if(e.code==='KeyQ')swap();else if(e.code==='Enter'&&st!=='play'&&st!=='menu')start();
  else if(e.code==='ArrowLeft')yaw-=.08;else if(e.code==='ArrowRight')yaw+=.08;else if(e.code==='ArrowUp')pitch=Math.min(.9,pitch+.05);else if(e.code==='ArrowDown')pitch=Math.max(-.9,pitch-.05)});
 // ===== PWA install =====
-let dip=null;const sa=matchMedia('(display-mode: standalone)').matches||navigator.standalone;
-addEventListener('beforeinstallprompt',e=>{e.preventDefault();dip=e;if(!sa)$('mInst').style.display=''});
-$('mInst').onclick=async()=>{if(dip){dip.prompt();await dip.userChoice;dip=null;$('mInst').style.display='none'}};
-if(!sa&&/iphone|ipad|ipod/i.test(navigator.userAgent))$('iosTip').style.display='';
-addEventListener('appinstalled',()=>$('mInst').style.display='none');
-if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+let dip = null;
+
+const isInstalled =
+  window.matchMedia('(display-mode: standalone)').matches ||
+  window.navigator.standalone === true;
+
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+
+if (isInstalled) {
+  $('mInst').style.display = 'none';
+  $('iosTip').style.display = 'none';
+} else if (isIOS) {
+  $('mInst').style.display = 'none';
+  $('iosTip').style.display = 'block';
+}
+
+addEventListener('beforeinstallprompt', event => {
+  event.preventDefault();
+  dip = event;
+
+  if (!isInstalled) {
+    $('mInst').style.display = 'block';
+  }
+});
+
+$('mInst').onclick = async () => {
+  if (!dip) return;
+
+  dip.prompt();
+
+  const result = await dip.userChoice;
+
+  if (result.outcome === 'accepted') {
+    $('mInst').style.display = 'none';
+  }
+
+  dip = null;
+};
+
+addEventListener('appinstalled', () => {
+  $('mInst').style.display = 'none';
+  $('iosTip').style.display = 'none';
+});
+
+if ('serviceWorker' in navigator) {
+  addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js', {
+      scope: './'
+    }).catch(error => console.error('PWA registration failed:', error));
+  });
+}
 window.DarkEarth={SV,PAY,XR,ITEMS}; // for future integrations
 // ===== loop =====
 lang();let last=performance.now();
