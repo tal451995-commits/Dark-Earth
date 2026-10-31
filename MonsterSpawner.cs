@@ -152,33 +152,71 @@ public class MonsterSpawner : MonoBehaviour
             return;
         }
 
+        
         Vector3 position;
-        if (!TryGetPlanePosition(out position))
+        bool hasPlane = TryGetPlanePosition(out position);
+
+        if (!hasPlane)
             position = GetFallbackPosition();
 
-        // Face the player (horizontal only). The old version faced the same way as the camera, i.e. showed its back.
+        // Face the player.
         Vector3 toCamera = arCamera.transform.position - position;
         toCamera.y = 0f;
-        if (toCamera.sqrMagnitude < 0.001f) toCamera = -arCamera.transform.forward;
-        Quaternion rotation = Quaternion.LookRotation(toCamera.normalized, Vector3.up);
+        if (toCamera.sqrMagnitude < 0.001f)
+            toCamera = -arCamera.transform.forward;
 
-        GameObject go = Instantiate(monsterPrefab, position, rotation);
+        Quaternion rotation =
+            Quaternion.LookRotation(toCamera.normalized, Vector3.up);
+
+        // Create an AR anchor when a detected floor position is available.
+        ARAnchor anchor = null;
+        GameObject go;
+
+        bool anchored = false;
+
+        if (hasPlane && anchorManager != null)
+        {
+            Pose anchorPose = new Pose(position, rotation);
+            anchored = anchorManager.TryAddAnchor(anchorPose, out anchor);
+        }
+
+        if (anchored && anchor != null)
+        {
+            go = Instantiate(monsterPrefab, anchor.transform);
+            go.transform.localPosition = Vector3.zero;
+            go.transform.localRotation = Quaternion.identity;
+
+            MonsterAnchorCleanup cleanup =
+                go.AddComponent<MonsterAnchorCleanup>();
+            cleanup.Initialize(anchor);
+        }
+        else
+        {
+            go = Instantiate(monsterPrefab, position, rotation);
+        }
+
         go.SetActive(true);
         SnapFeetToGround(go, position.y);
 
         MonsterHealth health = go.GetComponent<MonsterHealth>();
-        if (health == null) health = go.AddComponent<MonsterHealth>();
+        if (health == null)
+            health = go.AddComponent<MonsterHealth>();
+
         health.SetCamera(arCamera.transform);
         health.ScaleHealth(1f + 0.15f * (wave - 1));
 
         MonsterAI ai = go.GetComponent<MonsterAI>();
-        if (ai == null) ai = go.AddComponent<MonsterAI>();
+        if (ai == null)
+            ai = go.AddComponent<MonsterAI>();
+
         ai.SetTarget(arCamera.transform);
         ai.SetDifficulty(wave);
 
         CurrentMonster = go;
-        if (GameManager.Instance != null) GameManager.Instance.MonsterSpawned();
-    }
+
+        if (GameManager.Instance != null)
+            GameManager.Instance.MonsterSpawned();
+}
 
     // Uses AR Foundation plane detection when available.
     private bool TryGetPlanePosition(out Vector3 position)
